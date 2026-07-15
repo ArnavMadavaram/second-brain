@@ -1,0 +1,20 @@
+# Personal data — never commit, even privately
+data/raw/
+data/processed/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Model checkpoints / training artifacts (Phase 5+)
+models/
+checkpoints/
+*.pt
+*.safetensors
+
+# OS / editor cruft
+.DS_Store
+~$*.docx
+~$*.doc

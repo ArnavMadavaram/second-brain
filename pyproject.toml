@@ -1,0 +1,30 @@
+[project]
+name = "second-brain"
+version = "0.1.0"
+description = "Local-first personal knowledge retrieval system with an emotion-tuned embedding model (CS494 directed study)"
+requires-python = ">=3.12"
+dependencies = [
+    "sentence-transformers[train]==5.6.0",
+    "chromadb==1.5.9",
+    "transformers==5.13.0",
+    "tokenizers==0.22.2",
+    "torch==2.12.1",
+    "accelerate==1.14.0",
+    "datasets==5.0.0",
+    "scikit-learn==1.9.0",
+    "scipy==1.18.0",
+    "pandas==3.0.3",
+    "numpy==2.5.1",
+    "fastapi==0.139.0",
+    "uvicorn[standard]==0.50.2",
+    "anthropic==0.116.0",
+    "python-dotenv==1.2.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.1.1",
+]
+
+# Full transitive dependency freeze (reproducibility backup, not meant to be
+# hand-maintained): regenerate with `.venv/bin/pip freeze > requirements-lock.txt`
