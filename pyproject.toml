@@ -28,3 +28,7 @@ dev = [
 
 # Full transitive dependency freeze (reproducibility backup, not meant to be
 # hand-maintained): regenerate with `.venv/bin/pip freeze > requirements-lock.txt`
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
