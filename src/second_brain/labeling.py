@@ -34,6 +34,39 @@ def assign_split(sampled: list[dict], test_size: int = 200, seed: int = 43) -> l
     return result
 
 
+def stratified_split(labels: list[dict], train_frac: float = 0.6, dev_frac: float = 0.2, seed: int = 100) -> list[dict]:
+    """Re-split labeled records with stratification by label, so a rare class
+    (e.g. 'personal') is spread proportionally across train/dev/test instead
+    of landing almost entirely in one split by chance. Splits each label group
+    independently; remainder after train+dev goes to test so counts always
+    sum exactly to the group size."""
+    by_label: dict[str, list[dict]] = {}
+    for r in labels:
+        by_label.setdefault(r["label"], []).append(r)
+
+    rng = random.Random(seed)
+    result = []
+    for group in by_label.values():
+        shuffled = group[:]
+        rng.shuffle(shuffled)
+        n = len(shuffled)
+        n_train = round(n * train_frac)
+        n_dev = round(n * dev_frac)
+        n_train = min(n_train, n)
+        n_dev = min(n_dev, n - n_train)
+
+        for i, r in enumerate(shuffled):
+            record = dict(r)
+            if i < n_train:
+                record["split"] = "train"
+            elif i < n_train + n_dev:
+                record["split"] = "dev"
+            else:
+                record["split"] = "test"
+            result.append(record)
+    return result
+
+
 def remaining_to_label(sample: list[dict], existing_labels: dict[str, dict]) -> list[dict]:
     return [r for r in sample if r["message_id"] not in existing_labels]
 

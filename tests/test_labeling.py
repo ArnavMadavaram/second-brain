@@ -1,4 +1,9 @@
-from second_brain.labeling import assign_split, remaining_to_label, sample_messages_for_labeling
+from second_brain.labeling import (
+    assign_split,
+    remaining_to_label,
+    sample_messages_for_labeling,
+    stratified_split,
+)
 
 
 def _user_msg(message_id, conversation_id, text="hello"):
@@ -84,3 +89,58 @@ def test_remaining_to_label_returns_everything_when_no_labels_exist():
     remaining = remaining_to_label(sample, existing_labels={})
 
     assert len(remaining) == 2
+
+
+def _labeled(message_id, label):
+    return {"message_id": message_id, "conversation_id": f"c-{message_id}", "label": label, "split": "test"}
+
+
+def test_stratified_split_spreads_rare_label_across_all_three_splits():
+    # 10 personal, 40 task -- rare class must still land in train/dev/test
+    labels = [_labeled(f"p{i}", "personal") for i in range(10)] + [_labeled(f"t{i}", "task") for i in range(40)]
+
+    split = stratified_split(labels, train_frac=0.6, dev_frac=0.2, seed=1)
+
+    personal_splits = {r["split"] for r in split if r["label"] == "personal"}
+    assert personal_splits == {"train", "dev", "test"}
+
+
+def test_stratified_split_preserves_total_count_and_labels():
+    labels = [_labeled(f"p{i}", "personal") for i in range(10)] + [_labeled(f"t{i}", "task") for i in range(40)]
+
+    split = stratified_split(labels, train_frac=0.6, dev_frac=0.2, seed=1)
+
+    assert len(split) == len(labels)
+    original_labels = {r["message_id"]: r["label"] for r in labels}
+    for r in split:
+        assert r["label"] == original_labels[r["message_id"]]  # labels never change, only split
+
+
+def test_stratified_split_approximates_requested_fractions_per_label():
+    labels = [_labeled(f"t{i}", "task") for i in range(100)]
+
+    split = stratified_split(labels, train_frac=0.6, dev_frac=0.2, seed=1)
+
+    counts = {"train": 0, "dev": 0, "test": 0}
+    for r in split:
+        counts[r["split"]] += 1
+    assert counts["train"] == 60
+    assert counts["dev"] == 20
+    assert counts["test"] == 20
+
+
+def test_stratified_split_single_example_label_does_not_crash():
+    labels = [_labeled("e1", "exclude")]
+
+    split = stratified_split(labels, train_frac=0.6, dev_frac=0.2, seed=1)
+
+    assert len(split) == 1
+
+
+def test_stratified_split_is_reproducible_with_same_seed():
+    labels = [_labeled(f"p{i}", "personal") for i in range(10)] + [_labeled(f"t{i}", "task") for i in range(40)]
+
+    first = stratified_split(labels, seed=5)
+    second = stratified_split(labels, seed=5)
+
+    assert [r["split"] for r in first] == [r["split"] for r in second]
