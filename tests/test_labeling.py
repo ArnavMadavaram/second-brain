@@ -1,6 +1,7 @@
 from second_brain.labeling import (
     assign_split,
     remaining_to_label,
+    sample_additional_messages_for_labeling,
     sample_messages_for_labeling,
     stratified_split,
 )
@@ -144,3 +145,56 @@ def test_stratified_split_is_reproducible_with_same_seed():
     second = stratified_split(labels, seed=5)
 
     assert [r["split"] for r in first] == [r["split"] for r in second]
+
+
+def test_sample_additional_excludes_given_message_ids():
+    records = _records_across_conversations(n_conversations=5, msgs_per_conversation=3)
+    exclude = {"msg-0-0", "msg-1-0"}
+
+    sampled = sample_additional_messages_for_labeling(records, exclude_message_ids=exclude, n=100, seed=1)
+
+    sampled_ids = {r["message_id"] for r in sampled}
+    assert sampled_ids.isdisjoint(exclude)
+
+
+def test_sample_additional_respects_max_per_conversation():
+    # one conversation with far more messages than the cap
+    records = _records_across_conversations(n_conversations=1, msgs_per_conversation=20)
+
+    sampled = sample_additional_messages_for_labeling(
+        records, exclude_message_ids=set(), n=100, max_per_conversation=5, seed=1
+    )
+
+    assert len(sampled) == 5  # capped, even though 20 were available and n=100 was requested
+
+
+def test_sample_additional_spreads_before_repeating():
+    # 10 conversations, 3 messages each -- requesting fewer than 10 should touch
+    # many distinct conversations (round-robin) rather than draining the first ones
+    records = _records_across_conversations(n_conversations=10, msgs_per_conversation=3)
+
+    sampled = sample_additional_messages_for_labeling(
+        records, exclude_message_ids=set(), n=10, max_per_conversation=3, seed=1
+    )
+
+    conversation_ids = {r["conversation_id"] for r in sampled}
+    assert len(conversation_ids) == 10  # spread across all 10, not piled into 3-4
+
+
+def test_sample_additional_caps_at_available_candidates():
+    records = _records_across_conversations(n_conversations=3, msgs_per_conversation=2)
+
+    sampled = sample_additional_messages_for_labeling(
+        records, exclude_message_ids=set(), n=1000, max_per_conversation=5, seed=1
+    )
+
+    assert len(sampled) == 6  # only 6 candidate messages exist total
+
+
+def test_sample_additional_is_reproducible_with_same_seed():
+    records = _records_across_conversations(n_conversations=20, msgs_per_conversation=5)
+
+    first = sample_additional_messages_for_labeling(records, exclude_message_ids=set(), n=30, seed=9)
+    second = sample_additional_messages_for_labeling(records, exclude_message_ids=set(), n=30, seed=9)
+
+    assert [r["message_id"] for r in first] == [r["message_id"] for r in second]

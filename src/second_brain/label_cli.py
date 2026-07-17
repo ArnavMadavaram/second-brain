@@ -1,10 +1,19 @@
 import json
+import sys
 from pathlib import Path
 
 from second_brain.labeling import remaining_to_label
 
-SAMPLE_PATH = "data/processed/personal_task_sample.jsonl"
-LABELS_PATH = "data/processed/personal_task_labels.jsonl"
+BATCHES = {
+    "batch1": {
+        "sample_path": "data/processed/personal_task_sample.jsonl",
+        "labels_path": "data/processed/personal_task_labels.jsonl",
+    },
+    "batch2": {
+        "sample_path": "data/processed/personal_task_sample_batch2.jsonl",
+        "labels_path": "data/processed/personal_task_labels_batch2.jsonl",
+    },
+}
 
 VALID_LABELS = {"p": "personal", "t": "task", "x": "exclude"}
 
@@ -16,23 +25,24 @@ def load_jsonl(path: str) -> list[dict]:
         return [json.loads(line) for line in f if line.strip()]
 
 
-def main():
-    sample = load_jsonl(SAMPLE_PATH)
+def main(sample_path: str, labels_path: str):
+    sample = load_jsonl(sample_path)
     if not sample:
-        print(f"No sample found at {SAMPLE_PATH}. Run `python -m second_brain.labeling` first.")
+        print(f"No sample found at {sample_path}.")
         return
 
-    existing = {r["message_id"]: r for r in load_jsonl(LABELS_PATH)}
+    existing = {r["message_id"]: r for r in load_jsonl(labels_path)}
     todo = remaining_to_label(sample, existing)
 
     total = len(sample)
     print(f"{len(existing)}/{total} already labeled. {len(todo)} remaining.")
     print("For each message: [p]ersonal, [t]ask, [x] exclude (genuinely ambiguous/mixed), [q]uit\n")
 
-    with open(LABELS_PATH, "a", encoding="utf-8") as out:
+    with open(labels_path, "a", encoding="utf-8") as out:
         for i, record in enumerate(todo):
             done = len(existing) + i
-            print(f"--- {done + 1}/{total} (split: {record['split']}) ---")
+            split_tag = f" (split: {record['split']})" if "split" in record else ""
+            print(f"--- {done + 1}/{total}{split_tag} ---")
             title = record.get("conversation_title") or "(untitled)"
             print(f"[from: {title}]")
             text = record["text"]
@@ -50,12 +60,14 @@ def main():
                     break
                 print("Please enter p, t, x, or q.")
 
-            out.write(json.dumps({
+            record_out = {
                 "message_id": record["message_id"],
                 "conversation_id": record["conversation_id"],
-                "split": record["split"],
                 "label": VALID_LABELS[choice],
-            }, ensure_ascii=False) + "\n")
+            }
+            if "split" in record:
+                record_out["split"] = record["split"]
+            out.write(json.dumps(record_out, ensure_ascii=False) + "\n")
             out.flush()
             print()
 
@@ -63,4 +75,9 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    batch_name = sys.argv[1] if len(sys.argv) > 1 else "batch1"
+    if batch_name not in BATCHES:
+        print(f"Unknown batch '{batch_name}'. Choose from: {list(BATCHES.keys())}")
+        sys.exit(1)
+    paths = BATCHES[batch_name]
+    main(paths["sample_path"], paths["labels_path"])
