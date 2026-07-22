@@ -6,9 +6,14 @@ from second_brain.goemotions_pairs import (
     GOEMOTIONS_CATEGORIES,
     VA_LOOKUP,
     base_similarity_from_distance,
+    cap_per_category,
     compute_target_similarity,
     euclidean_distance,
     get_va_coordinates,
+    generate_training_pairs,
+    group_by_primary_category,
+    nearest_categories,
+    sample_partners,
     shares_category,
 )
 
@@ -131,3 +136,163 @@ def test_compute_target_similarity_multi_label_shared_category_not_capped():
         euclidean_distance(get_va_coordinates(["joy", "love"]), get_va_coordinates(["love", "grief"]))
     )
     assert sim == pytest.approx(uncapped)
+
+
+def _ex(id_, labels, text=""):
+    return {"id": id_, "labels": labels, "text": text or id_}
+
+
+def test_group_by_primary_category_uses_first_label():
+    examples = [
+        _ex("a", ["joy"]),
+        _ex("b", ["joy", "love"]),  # primary is joy even though multi-label
+        _ex("c", ["anger"]),
+    ]
+    grouped = group_by_primary_category(examples)
+    assert {e["id"] for e in grouped["joy"]} == {"a", "b"}
+    assert {e["id"] for e in grouped["anger"]} == {"c"}
+
+
+def test_group_by_primary_category_omits_empty_groups():
+    examples = [_ex("a", ["joy"])]
+    grouped = group_by_primary_category(examples)
+    assert "anger" not in grouped  # no anger examples given, no empty-list entry
+
+
+def test_cap_per_category_keeps_all_examples_below_cap():
+    grouped = {"grief": [_ex(f"g{i}", ["grief"]) for i in range(5)]}
+    result = cap_per_category(grouped, cap=1500, seed=1)
+    assert len(result) == 5
+
+
+def test_cap_per_category_downsamples_above_cap():
+    grouped = {"neutral": [_ex(f"n{i}", ["neutral"]) for i in range(100)]}
+    result = cap_per_category(grouped, cap=10, seed=1)
+    assert len(result) == 10
+    # must be an actual subset, not fabricated examples
+    result_ids = {e["id"] for e in result}
+    original_ids = {e["id"] for e in grouped["neutral"]}
+    assert result_ids <= original_ids
+
+
+def test_cap_per_category_is_reproducible_with_same_seed():
+    grouped = {"neutral": [_ex(f"n{i}", ["neutral"]) for i in range(100)]}
+    first = cap_per_category(grouped, cap=10, seed=5)
+    second = cap_per_category(grouped, cap=10, seed=5)
+    assert [e["id"] for e in first] == [e["id"] for e in second]
+
+
+def test_cap_per_category_combines_across_categories():
+    grouped = {
+        "neutral": [_ex(f"n{i}", ["neutral"]) for i in range(100)],
+        "grief": [_ex(f"g{i}", ["grief"]) for i in range(5)],
+    }
+    result = cap_per_category(grouped, cap=10, seed=1)
+    assert len(result) == 15  # 10 capped from neutral + all 5 from grief
+
+
+def test_nearest_categories_excludes_the_category_itself():
+    result = nearest_categories("anger")
+    assert "anger" not in result
+
+
+def test_nearest_categories_includes_every_other_category():
+    result = nearest_categories("anger")
+    assert len(result) == len(GOEMOTIONS_CATEGORIES) - 1
+    assert set(result) == set(GOEMOTIONS_CATEGORIES) - {"anger"}
+
+
+def test_nearest_categories_sorted_closest_first():
+    result = nearest_categories("anger")
+    # fear should rank near the top -- it's the worked example of VA-closeness
+    assert result.index("fear") < len(result) // 3
+    # sadness (low arousal, opposite of anger's high arousal) should rank far
+    assert result.index("fear") < result.index("sadness")
+
+
+def _full_grouped(n_per_category=4):
+    return group_by_primary_category(
+        [_ex(f"{cat}-{i}", [cat]) for cat in GOEMOTIONS_CATEGORIES for i in range(n_per_category)]
+    )
+
+
+def test_sample_partners_excludes_the_anchor_itself():
+    grouped = _full_grouped()
+    anchor = grouped["anger"][0]
+    partners = sample_partners(anchor, grouped, k_same=3, k_diff_close=2, k_diff_far=2, seed=1)
+    assert anchor["id"] not in {p["id"] for p in partners}
+
+
+def test_sample_partners_returns_requested_counts_when_available():
+    grouped = _full_grouped(n_per_category=10)  # plenty of same-category partners available
+    anchor = grouped["anger"][0]
+    partners = sample_partners(anchor, grouped, k_same=3, k_diff_close=2, k_diff_far=2, seed=1)
+    assert len(partners) == 7  # 3 + 2 + 2
+
+
+def test_sample_partners_same_category_partners_share_anchor_category():
+    grouped = _full_grouped()
+    anchor = grouped["anger"][0]
+    partners = sample_partners(anchor, grouped, k_same=3, k_diff_close=0, k_diff_far=0, seed=1)
+    assert all(p["labels"][0] == "anger" for p in partners)
+
+
+def test_sample_partners_close_partners_are_va_closer_than_far_partners():
+    grouped = _full_grouped()
+    anchor = grouped["anger"][0]
+    close = sample_partners(anchor, grouped, k_same=0, k_diff_close=5, k_diff_far=0, seed=1)
+    far = sample_partners(anchor, grouped, k_same=0, k_diff_close=0, k_diff_far=5, seed=1)
+
+    ranking = nearest_categories("anger")
+    close_ranks = [ranking.index(p["labels"][0]) for p in close]
+    far_ranks = [ranking.index(p["labels"][0]) for p in far]
+    assert max(close_ranks) < min(far_ranks)  # every close pick ranks nearer than every far pick
+
+
+def test_sample_partners_is_reproducible_with_same_seed():
+    grouped = _full_grouped()
+    anchor = grouped["anger"][0]
+    first = sample_partners(anchor, grouped, seed=7)
+    second = sample_partners(anchor, grouped, seed=7)
+    assert [p["id"] for p in first] == [p["id"] for p in second]
+
+
+def test_sample_partners_caps_gracefully_when_pool_smaller_than_requested():
+    grouped = _full_grouped(n_per_category=1)  # only 1 example per category available
+    anchor = grouped["anger"][0]
+    # k_same=3 requested but anger has only the anchor itself (0 other same-category examples)
+    partners = sample_partners(anchor, grouped, k_same=3, k_diff_close=2, k_diff_far=2, seed=1)
+    same_category_partners = [p for p in partners if p["labels"][0] == "anger"]
+    assert len(same_category_partners) == 0  # doesn't crash, just returns what's available
+
+
+def test_generate_training_pairs_produces_expected_count():
+    examples = [_ex(f"{cat}-{i}", [cat], text=f"{cat} text {i}") for cat in GOEMOTIONS_CATEGORIES for i in range(10)]
+    pairs = generate_training_pairs(examples, cap=1500, k_same=3, k_diff_close=2, k_diff_far=2)
+    # 28 categories x 10 examples each = 280 anchors (none capped, cap=1500), 7 partners each
+    assert len(pairs) == 280 * 7
+
+
+def test_generate_training_pairs_similarity_matches_compute_target_similarity():
+    examples = [_ex(f"{cat}-{i}", [cat], text=f"{cat} text {i}") for cat in GOEMOTIONS_CATEGORIES for i in range(10)]
+    pairs = generate_training_pairs(examples, cap=1500, k_same=1, k_diff_close=1, k_diff_far=1)
+    # every generated pair's similarity should be independently reproducible
+    # by calling compute_target_similarity on the same two categories
+    anger_pairs = [p for p in pairs if "anger" in p["text_a"]]
+    for p in anger_pairs:
+        other_category = p["text_b"].split(" text")[0]
+        expected = compute_target_similarity(["anger"], [other_category])
+        assert p["similarity"] == pytest.approx(expected)
+
+
+def test_generate_training_pairs_respects_category_cap():
+    examples = [_ex(f"neutral-{i}", ["neutral"], text=f"n{i}") for i in range(100)]
+    examples += [_ex(f"grief-{i}", ["grief"], text=f"g{i}") for i in range(5)]
+    pairs = generate_training_pairs(examples, cap=10, k_same=0, k_diff_close=0, k_diff_far=0)
+    # 10 neutral anchors (capped from 100) + 5 grief anchors (below cap), 0 partners each -> 0 pairs
+    # but we can check the anchor count indirectly: with k=0 there should be no pairs at all,
+    # so instead verify via a version that keeps same-category partners
+    pairs_with_partners = generate_training_pairs(examples, cap=10, k_same=3, k_diff_close=0, k_diff_far=0)
+    neutral_anchor_pairs = [p for p in pairs_with_partners if "n" in p["text_a"] and p["text_a"].startswith("n")]
+    # at most 10 neutral anchors x 3 same-category partners
+    assert len(neutral_anchor_pairs) <= 10 * 3
