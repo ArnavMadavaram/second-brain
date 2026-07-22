@@ -72,12 +72,24 @@ def main(smoke_test: bool):
     output_dir = SMOKE_OUTPUT_DIR if smoke_test else FULL_OUTPUT_DIR
     args = SentenceTransformerTrainingArguments(
         output_dir=output_dir,
-        num_train_epochs=1 if smoke_test else 3,
+        # First run (3 epochs, save_strategy="epoch", no best-checkpoint selection)
+        # showed eval_loss bottoming out at epoch ~0.62 then rising through epoch 3 --
+        # classic overfitting. Fixed here: load_best_model_at_end restores the actual
+        # best checkpoint by eval_loss instead of keeping whichever epoch ran last.
+        # save_strategy must match eval_strategy for that to work. Epochs cut from 3
+        # to 1.5 -- comfortable margin past the observed ~0.62 optimum without paying
+        # for two more epochs we already have direct evidence won't help.
+        num_train_epochs=1 if smoke_test else 1.5,
         per_device_train_batch_size=32,
         per_device_eval_batch_size=32,
         eval_strategy="steps",
         eval_steps=5 if smoke_test else 500,
-        save_strategy="no" if smoke_test else "epoch",
+        save_strategy="no" if smoke_test else "steps",
+        save_steps=500,
+        save_total_limit=3,
+        load_best_model_at_end=False if smoke_test else True,
+        metric_for_best_model="eval_loss",
+        greater_is_better=False,
         logging_steps=1 if smoke_test else 50,
         max_steps=10 if smoke_test else -1,
         report_to="none",
