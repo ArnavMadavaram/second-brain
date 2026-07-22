@@ -187,6 +187,41 @@ def generate_training_pairs(
     return pairs
 
 
+def build_evaluation_triplets(examples: list[dict], n_anchors: int = 250, seed: int = 600) -> list[dict]:
+    """Build (anchor, positive, negative_close, negative_far) evaluation
+    triplets for intrinsic evaluation -- intended for a split never used to
+    build training pairs (e.g. the official GoEmotions test split). Reuses
+    the same category-grouping and partner-sampling machinery as training
+    pair construction, so "positive" and "negative" mean exactly what they
+    meant during training: positive = same-category partner, negative_far =
+    VA-far different-category partner (an "easy" triplet), negative_close =
+    VA-close different-category partner (a "hard" triplet -- specifically
+    tests whether the model learned the anger/fear-style cap distinction,
+    not just coarse valence/arousal clustering). Anchors without an
+    available partner of every required type are skipped, not forced."""
+    grouped = group_by_primary_category(examples)
+    rng = random.Random(seed)
+    shuffled = examples[:]
+    rng.shuffle(shuffled)
+
+    triplets = []
+    for i, anchor in enumerate(shuffled):
+        if len(triplets) >= n_anchors:
+            break
+        same = sample_partners(anchor, grouped, k_same=1, k_diff_close=0, k_diff_far=0, seed=seed + i * 3 + 1)
+        close = sample_partners(anchor, grouped, k_same=0, k_diff_close=1, k_diff_far=0, seed=seed + i * 3 + 2)
+        far = sample_partners(anchor, grouped, k_same=0, k_diff_close=0, k_diff_far=1, seed=seed + i * 3 + 3)
+        if not same or not close or not far:
+            continue
+        triplets.append({
+            "anchor": anchor["text"],
+            "positive": same[0]["text"],
+            "negative_close": close[0]["text"],
+            "negative_far": far[0]["text"],
+        })
+    return triplets
+
+
 def get_va_coordinates(labels: list[str]) -> tuple[float, float]:
     """VA point for an example: the lookup value for a single label, or the
     simple average across labels for a multi-label example (~17% of

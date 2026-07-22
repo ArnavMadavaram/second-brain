@@ -6,6 +6,7 @@ from second_brain.goemotions_pairs import (
     GOEMOTIONS_CATEGORIES,
     VA_LOOKUP,
     base_similarity_from_distance,
+    build_evaluation_triplets,
     cap_per_category,
     compute_target_similarity,
     euclidean_distance,
@@ -296,3 +297,31 @@ def test_generate_training_pairs_respects_category_cap():
     neutral_anchor_pairs = [p for p in pairs_with_partners if "n" in p["text_a"] and p["text_a"].startswith("n")]
     # at most 10 neutral anchors x 3 same-category partners
     assert len(neutral_anchor_pairs) <= 10 * 3
+
+
+def test_build_evaluation_triplets_returns_requested_structure():
+    examples = [_ex(f"{cat}-{i}", [cat], text=f"{cat} text {i}") for cat in GOEMOTIONS_CATEGORIES for i in range(5)]
+    triplets = build_evaluation_triplets(examples, n_anchors=20, seed=1)
+    assert len(triplets) > 0
+    for t in triplets:
+        assert set(t.keys()) == {"anchor", "positive", "negative_close", "negative_far"}
+
+
+def test_build_evaluation_triplets_caps_at_n_anchors():
+    examples = [_ex(f"{cat}-{i}", [cat], text=f"{cat} text {i}") for cat in GOEMOTIONS_CATEGORIES for i in range(5)]
+    triplets = build_evaluation_triplets(examples, n_anchors=10, seed=1)
+    assert len(triplets) <= 10
+
+
+def test_build_evaluation_triplets_skips_anchors_without_enough_partners():
+    # only 1 category with any real pool -- no different-category partners exist at all
+    examples = [_ex(f"joy-{i}", ["joy"], text=f"joy text {i}") for i in range(5)]
+    triplets = build_evaluation_triplets(examples, n_anchors=10, seed=1)
+    assert triplets == []  # no close/far partners possible -- must not crash, just skip
+
+
+def test_build_evaluation_triplets_is_reproducible_with_same_seed():
+    examples = [_ex(f"{cat}-{i}", [cat], text=f"{cat} text {i}") for cat in GOEMOTIONS_CATEGORIES for i in range(5)]
+    first = build_evaluation_triplets(examples, n_anchors=15, seed=3)
+    second = build_evaluation_triplets(examples, n_anchors=15, seed=3)
+    assert first == second
